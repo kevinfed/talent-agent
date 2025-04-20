@@ -1,3 +1,4 @@
+import os
 import logging
 import traceback
 import multiprocessing
@@ -6,7 +7,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from openai import AsyncAzureOpenAI
 from database import Database
-from settings import Settings
+from config import Settings
 from routes.admin_router import router as admin_router
 from routes.public_router import router as public_router
 
@@ -69,38 +70,43 @@ async def handle_exc(r: Request, e: Exception) -> JSONResponse:
 
 
 if __name__ == "__main__":
-    import gunicorn.app.base
+    if os.environ.get("WEBSITE_SITE_NAME") is None:
+        import uvicorn
 
-    workers_count = min(9, multiprocessing.cpu_count() * 2 + 1)
+        uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+    else:
+        import gunicorn.app.base
 
-    class StandaloneApplication(gunicorn.app.base.BaseApplication):
-        def __init__(self, app, options=None):
-            self.options = options or {}
-            self.application = app
-            super().__init__()
+        workers_count = min(9, multiprocessing.cpu_count() * 2 + 1)
 
-        def load_config(self):
-            config = {
-                key: value
-                for key, value in self.options.items()
-                if key in self.cfg.settings and value is not None
-            }
-            for key, value in config.items():
-                self.cfg.set(key.lower(), value)
+        class StandaloneApplication(gunicorn.app.base.BaseApplication):
+            def __init__(self, app, options=None):
+                self.options = options or {}
+                self.application = app
+                super().__init__()
 
-        def load(self):
-            return self.application
+            def load_config(self):
+                config = {
+                    key: value
+                    for key, value in self.options.items()
+                    if key in self.cfg.settings and value is not None
+                }
+                for key, value in config.items():
+                    self.cfg.set(key.lower(), value)
 
-    options = {
-        "bind": "0.0.0.0:8000",
-        "workers": workers_count,
-        "worker_class": "uvicorn.workers.UvicornWorker",
-        "threads": 4,
-        "timeout": 120,
-        "accesslog": "-",
-        "errorlog": "-",
-        "loglevel": "info",
-    }
+            def load(self):
+                return self.application
 
-    logger.info(f"Starting Gunicorn with {workers_count} workers")
-    StandaloneApplication(app, options).run()
+        options = {
+            "bind": "0.0.0.0:8000",
+            "workers": workers_count,
+            "worker_class": "uvicorn.workers.UvicornWorker",
+            "threads": 4,
+            "timeout": 120,
+            "accesslog": "-",
+            "errorlog": "-",
+            "loglevel": "info",
+        }
+
+        logger.info(f"Starting Gunicorn with {workers_count} workers")
+        StandaloneApplication(app, options).run()

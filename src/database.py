@@ -70,40 +70,33 @@ class Database:
             await client.close()
 
     async def add_interaction(self, userId: str, query: str, response: str):
-        try:
-            history = await self.get_history(userId)
-            userId = await get_hash(userId)
-            container = self.client.get_database_client(
-                self.db_name
-            ).get_container_client(self.history_container_name)
+        history = await self.get_history(userId)
+        userId = await get_hash(userId)
+        container = self.client.get_database_client(self.db_name).get_container_client(
+            self.history_container_name
+        )
 
-            qr_pair = {"User": query, "Sophie": response}
-            history.append(qr_pair)
-            # optional logic to trim message history
-            # if len(history) > 5:
-            #     history = history[-5:]
+        qr_pair = {"User": query, "Sophie": response}
+        history.append(qr_pair)
+        # optional logic to trim message history
+        if len(history) > 5:
+            history = history[-5:]
 
-            item_to_upsert = {"id": userId, "user_id": userId, "history": history}
+        item_to_upsert = {"id": userId, "user_id": userId, "history": history}
 
-            await container.upsert_item(item_to_upsert)
-        except CosmosHttpResponseError as e:
-            print(f"Error adding interaction: {e}")
+        await container.upsert_item(item_to_upsert)
 
     async def get_history(self, userId: str, n: int = None) -> list[dict]:
-        try:
-            userId = await get_hash(userId)
-            container = self.client.get_database_client(
-                self.db_name
-            ).get_container_client(self.history_container_name)
-            query = f"SELECT * FROM c WHERE c.user_id = '{userId}'"
-            items = [item async for item in container.query_items(query=query)]
-            history = items[0].get("history", []) if items else []
-            if n:
-                return history[-n:]
-            return history
-        except CosmosHttpResponseError as e:
-            print(f"Error retrieving history: {e}")
-            return []
+        userId = await get_hash(userId)
+        container = self.client.get_database_client(self.db_name).get_container_client(
+            self.history_container_name
+        )
+        query = f"SELECT * FROM c WHERE c.user_id = '{userId}'"
+        items = [item async for item in container.query_items(query=query)]
+        history = items[0].get("history", []) if items else []
+        if n:
+            return history[-n:]
+        return history
 
     async def search_cache(self, query: str, openai: AsyncAzureOpenAI) -> list[dict]:
         container = self.client.get_database_client(self.db_name).get_container_client(
@@ -160,42 +153,38 @@ class Database:
         query_hash = await get_hash(query)
         query_embedding = await generate_embeddings(query, openai)
 
-        try:
-            query_count = len(
-                [
-                    item
-                    async for item in container.query_items(
-                        query="SELECT VALUE COUNT(1) FROM c"
-                    )
-                ]
-            )
+        query_count = len(
+            [
+                item
+                async for item in container.query_items(
+                    query="SELECT VALUE COUNT(1) FROM c"
+                )
+            ]
+        )
 
-            cache_max_size = int(os.getenv("CACHE_MAX_SIZE", "1000"))
-            if query_count >= cache_max_size:
-                eviction_query = """
-                SELECT TOP 1 c.id 
-                FROM c 
-                ORDER BY c.last_accessed ASC
-                """
-                items_to_evict = [
-                    item async for item in container.query_items(query=eviction_query)
-                ]
+        cache_max_size = int(os.getenv("CACHE_MAX_SIZE", "1000"))
+        if query_count >= cache_max_size:
+            eviction_query = """
+            SELECT TOP 1 c.id 
+            FROM c 
+            ORDER BY c.last_accessed ASC
+            """
+            items_to_evict = [
+                item async for item in container.query_items(query=eviction_query)
+            ]
 
-                if items_to_evict:
-                    await container.delete_item(
-                        item=items_to_evict[0], partition_key=items_to_evict[0]["id"]
-                    )
+            if items_to_evict:
+                await container.delete_item(
+                    item=items_to_evict[0], partition_key=items_to_evict[0]["id"]
+                )
 
-            cache_item = {
-                "id": query_hash,
-                "query_hash": query_hash,
-                "query": query,
-                "result": result,
-                "embedding": query_embedding,
-                "last_accessed": datetime.now().isoformat(),
-                "created_at": datetime.now().isoformat(),
-            }
-            await container.upsert_item(body=cache_item)
-
-        except Exception as e:
-            print(f"Cache update error: {e}")
+        cache_item = {
+            "id": query_hash,
+            "query_hash": query_hash,
+            "query": query,
+            "result": result,
+            "embedding": query_embedding,
+            "last_accessed": datetime.now().isoformat(),
+            "created_at": datetime.now().isoformat(),
+        }
+        await container.upsert_item(body=cache_item)
